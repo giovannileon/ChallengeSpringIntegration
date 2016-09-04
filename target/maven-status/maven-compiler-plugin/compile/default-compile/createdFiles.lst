@@ -1,0 +1,7 @@
+com\cpandey\siexample\Application.class
+com\cpandey\siexample\filter\SoFeedFilter.class
+com\cpandey\siexample\pojo\SoFeed.class
+com\cpandey\siexample\pojo\FeedEntity.class
+com\cpandey\siexample\transformer\SoFeedDbTransformer.class
+com\cpandey\siexample\service\PersistFeed.class
+com\cpandey\siexample\service\FeedService.class

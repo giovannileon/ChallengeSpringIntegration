@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:int="http://www.springframework.org/schema/integration"
+	xmlns:int-jpa="http://www.springframework.org/schema/integration/jpa"
+	xmlns:jdbc="http://www.springframework.org/schema/jdbc" xmlns:tx="http://www.springframework.org/schema/tx"
+	xmlns:context="http://www.springframework.org/schema/context"
+	xmlns:int-feed="http://www.springframework.org/schema/integration/feed"
+	xsi:schemaLocation="http://www.springframework.org/schema/integration http://www.springframework.org/schema/integration/spring-integration.xsd
+		http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd
+		http://www.springframework.org/schema/context http://www.springframework.org/schema/context/spring-context.xsd
+		http://www.springframework.org/schema/jdbc http://www.springframework.org/schema/jdbc/spring-jdbc.xsd
+		http://www.springframework.org/schema/tx http://www.springframework.org/schema/tx/spring-tx.xsd
+		http://www.springframework.org/schema/integration/jpa http://www.springframework.org/schema/integration/jpa/spring-integration-jpa.xsd
+		http://www.springframework.org/schema/integration/feed http://www.springframework.org/schema/integration/feed/spring-integration-feed.xsd">
+
+
+	<context:component-scan base-package="com.cpandey" />
+	<context:property-placeholder location="classpath*:/settings.properties" />
+
+
+	<!-- Global Poller -->
+	<int:poller default="true" fixed-rate="20000" />
+
+	<int-feed:inbound-channel-adapter id="feedAdapter"
+		channel="fetchedFeedChannel" auto-startup="true" url="${feeds.url}">
+		<int:poller fixed-rate="500" max-messages-per-poll="1" />
+	</int-feed:inbound-channel-adapter>
+
+
+	<!-- Message is read by feed inbound channel adapter and put on this channel, 
+		which is picked up by the filter for processing -->
+	<int:channel id="fetchedFeedChannel">
+		<int:queue />
+	</int:channel>
+
+
+	<!-- Let transformers put the message on transformedChannel, from there 
+		based on payload it will be routed to proper channel -->
+	<int:channel id="transformedChannel" />
+
+	<!-- Channels for external components -->
+	<int:channel id="jdbcChannel" />
+
+	<bean id="filterSoFeedBean" class="com.cpandey.siexample.filter.SoFeedFilter" />
+	<bean id="feedDbTransformerBean" class="com.cpandey.siexample.transformer.SoFeedDbTransformer" />
+
+	<bean id="persistFeed" class="com.cpandey.siexample.service.PersistFeed" />
+
+
+
+	<!--Filter the feed which are not for Java category -->
+	<int:filter input-channel="fetchedFeedChannel"
+		output-channel="filteredFeedChannel" ref="filterSoFeedBean" method="filterFeed" />
+
+
+
+	<!-- Transformers -->
+	<int:transformer id="dbFeedTransformer" ref="feedDbTransformerBean"
+		input-channel="filteredFeedChannel" method="transformFeed"
+		output-channel="jdbcChannel" />
+
+
+	<int:payload-type-router input-channel="transformedChannel">
+		<int:mapping type="com.cpandey.siexample.pojo.SoFeed"
+			channel="createFeedRequestChannel" />
+	</int:payload-type-router>
+
+	<!-- Service activators to put the message in DB -->
+	<int:service-activator ref="persistFeed"
+		input-channel="jdbcChannel" output-channel="transformedChannel" />
+
+
+
+	<!-- JPA Set up -->
+	<!-- Feed service is a gateway, The interface is define in Java, and this 
+		is its impl When createFeed is called on Feed service, it will place the 
+		Pojo on jdbcChannel -so this is a response channel jdbc channel is read by 
+		updating-outbound-gateway and that does all the actual update -->
+
+
+	<!-- JDBC -->
+	<int:channel id="createFeedRequestChannel" />
+	<int:channel id="readFeedRequestChannel" />
+	<int:channel id="printAllFeedChannel" />
+
+	<!-- Gate request and reply channel concept -->
+	<!-- . It publishes a Message using feed service and put it on channel identified 
+		by request-channel. -->
+	<!-- The proxy then blocks the call until it receives a reply from the reply-channel -->
+	<!-- Typically you don't have to specify the default-reply-channel, since 
+		a Gateway will -->
+	<!-- auto-create a temporary, anonymous reply channel, where it will listen 
+		for the reply. -->
+
+	<int:gateway id="feedService" service-interface="com.cpandey.siexample.service.FeedService"
+		default-request-timeout="5000" default-reply-timeout="5000">
+		<int:method name="createFeed" request-channel="createFeedRequestChannel" />
+	</int:gateway>
+
+	<int-jpa:updating-outbound-gateway
+		entity-manager-factory="entityManagerFactory" request-channel="createFeedRequestChannel"
+		entity-class="com.cpandey.siexample.pojo.FeedEntity" reply-channel="printAllFeedChannel">
+		<int-jpa:transactional transaction-manager="transactionManager" />
+	</int-jpa:updating-outbound-gateway>
+
+
+	<int:service-activator ref="persistFeed" method="printFeed"
+		input-channel="printAllFeedChannel" />
+
+	<!-- Depending on the selected profile, users can use different JPA Providers -->
+
+	<beans profile="default, hibernate">
+		<import resource="classpath:/integration/spring-integration-hibernate.xml" />
+	</beans>
+
+
+</beans>
